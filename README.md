@@ -10,6 +10,123 @@
 
 ## 问题汇总
 
+### 浅渲染不会执行React组件中的ref函数
+在单元测试中使用`shallow`时，元素或组件的`ref`并不会被执行。
+
+```js
+export default class Container extends React.Component {
+  constructor(props) {
+    super(props);
+  }
+
+  log = () => {
+    console.log(this.container);
+  }
+
+  getContainerElement = element => {
+    this.container = element;
+  }
+
+  render() {
+    return (
+      <div className="container" ref={ this.getContainerElement }>
+        <p>This is a container.</p>
+        <button onClick={ this.log }>log</button>
+      </div>
+    );
+  }
+}
+```
+
+```js
+import React from 'react';
+import { shallow } from 'enzyme';
+import Container from './Container';
+
+test('get container element', () => {
+  var wrapper = shallow(
+    <Container />
+  );
+  wrapper.find('button').simulate('click');
+});
+```
+
+执行上述代码后可以发现，打印出来的内容会是`undefined`，在这种情况下对`this.container`执行任何操作都会导致<b>测试报错</b>，比如`this.container.className += ' view';`，因此只能使用mock。
+
+```js
+import React from 'react';
+import { shallow } from 'enzyme';
+import Container from './Container';
+
+test('get container element', () => {
+  var wrapper = shallow(
+    <Container />
+  );
+  wrapper.instance().getContainerElement({});
+  wrapper.find('button').simulate('click');
+});
+```
+
+上述代码打印出来的会是`{}`，<b>这可以作为解决方法之一。</b>
+
+但是如果在`componentDidMount`中用到`this.container`，而且执行`shallow`时该生命周期函数会被触发，<b>此时测试还是会出现错误，因为mock对象根本还没有传入。</b>
+
+```js
+componentDidMount() {
+  // TypeError: Cannot read property 'style' of undefined
+  this.container.style.margin = '10px';
+}
+```
+
+此时可以再扩展一个`ContainerWrapper`，在这个组件中将`ref`赋值的内容设置好。
+
+```js
+export default class Container extends React.Component {
+  constructor(props) {
+    super(props);
+  }
+
+  componentDidMount() {
+    this.container.style.margin = '10px';
+  }
+
+  getContainerElement = element => {
+    this.container = element;
+  }
+
+  render() {
+    return (
+      <div className="container" ref={ this.getContainerElement }>
+        <p>This is a container.</p>
+      </div>
+    );
+  }
+}
+```
+
+```js
+import React from 'react';
+import { shallow } from 'enzyme';
+import Container from './Container';
+
+class ContainerWrapper extends Container {
+  constructor(props) {
+    super(props);
+    this.container = {
+      style: {}
+    };
+  }
+}
+
+test('update container element style', () => {
+  var wrapper = shallow(
+    <ContainerWrapper />
+  );
+});
+```
+
+上述这种解决方法利用了<b>面向对象中的继承</b>（比前一种直接执行`ref`的绑定函数明显要更好），而且它能覆盖到任何一种场景（起码我目前还没遇到过覆盖不了的～～），<b>因此建议总是使用该解决方法。</b>
+
 ### 无法测试React组件中的异步回调内容
 我们经常都会在React组件内部使用异步函数来完成业务逻辑，比如获取后台数据。在单元测试中，如果使用enzyme渲染组件，它并不会等待组件内部的异步操作执行完毕。因此在异步回调都还未被执行时，整个测试流程就已经结束了。
 
@@ -81,7 +198,7 @@ test('promise callback in Item Component', async () => {
 * [Testing component with async componentDidMount](https://github.com/airbnb/enzyme/issues/1587)
 * [深入理解 JavaScript 事件循环 — task and microtask](https://www.cnblogs.com/dong-xu/p/7000139.html)
 
-另外再介绍一个不是那么"地道"的解决方法给大家：
+另外再介绍一个不是那么"正规"的解决方法给大家（但是建议避免使用）：
 
 ```js
 export default class Item extends React.Component {
